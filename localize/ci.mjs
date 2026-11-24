@@ -260,6 +260,7 @@ async function buildNotes({ commit, version, sha, coverage, prevSha, assets }) {
   lines.push('3. 点「加载解压缩的扩展」，选择解压出来的文件夹。');
   lines.push('');
   lines.push('> 装过官方商店版的话，记得先停用官方版，否则两个图标容易搞混。');
+  lines.push('> Firefox 的包未签名，只能在 `about:debugging` 里临时加载；长期使用请用 Edge / Chrome。');
   lines.push('');
   lines.push('### 文件');
   for (const a of assets) lines.push(`- \`${a}\``);
