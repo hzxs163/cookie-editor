@@ -1,8 +1,7 @@
 {
-  "checkedAt": null,
-  "upstreamSha": null,
-  "version": null,
-  "tag": null,
-  "released": false,
-  "heartbeatAt": null
+  "checkedAt": "2026-11-24T03:55:19.747Z",
+  "upstreamSha": "98633ba78a414937068eb3c33f0696684c6d2440",
+  "version": "1.13.0",
+  "tag": "zh-v1.13.0-98633ba",
+  "released": true
 }
