@@ -40,6 +40,31 @@ const outDir = path.resolve(value('--out', 'dist'));
 const log = (...a) => console.log(...a);
 
 /**
+ * 网络容易抖（raw.githubusercontent 偶发 503），统一加退避重试。
+ * @param {string} label
+ * @param {Function} fn
+ * @param {number} [attempts]
+ * @return {Promise<any>}
+ */
+async function withRetry(label, fn, attempts = 4) {
+  let lastError;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (i === attempts - 1) break;
+      const wait = 2000 * (i + 1);
+      log(
+        `⚠️  ${label} 失败（${String(error.message).slice(0, 120)}），${wait / 1000}s 后重试`
+      );
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+  }
+  throw lastError;
+}
+
+/**
  * 调 GitHub REST API。
  * @param {string} method
  * @param {string} apiPath 以 / 开头的路径。
@@ -47,23 +72,29 @@ const log = (...a) => console.log(...a);
  * @return {Promise<any>}
  */
 async function gh(method, apiPath, body) {
-  const res = await fetch(`${API}${apiPath}`, {
-    method,
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${TOKEN}`,
-      'User-Agent': 'cookie-editor-zh-sync',
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
+  return withRetry(`${method} ${apiPath}`, async () => {
+    const res = await fetch(`${API}${apiPath}`, {
+      method,
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${TOKEN}`,
+        'User-Agent': 'cookie-editor-zh-sync',
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      const text = await res.text();
+      const err = new Error(
+        `${method} ${apiPath} → ${res.status} ${text.slice(0, 300)}`
+      );
+      err.status = res.status;
+      throw err;
+    }
+    if (res.status === 204) return {};
+    return res.json();
   });
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${method} ${apiPath} → ${res.status} ${text.slice(0, 300)}`);
-  }
-  if (res.status === 204) return {};
-  return res.json();
 }
 
 /**
@@ -72,11 +103,35 @@ async function gh(method, apiPath, body) {
  * @return {Promise<string>}
  */
 async function raw(url) {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'cookie-editor-zh-sync' },
+  return withRetry(`GET ${url}`, async () => {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'cookie-editor-zh-sync' },
+    });
+    if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
+    return res.text();
   });
-  if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
-  return res.text();
+}
+
+/**
+ * 读上游某个提交的 package.json：先走 raw，失败再退回 API。
+ * @param {string} sha
+ * @return {Promise<object>}
+ */
+async function upstreamPackage(sha) {
+  try {
+    return JSON.parse(
+      await raw(
+        `https://raw.githubusercontent.com/${UPSTREAM}/${sha}/package.json`
+      )
+    );
+  } catch (error) {
+    log(`⚠️  raw 读取 package.json 失败，改用 API：${error.message}`);
+    const file = await gh(
+      'GET',
+      `/repos/${UPSTREAM}/contents/package.json?ref=${sha}`
+    );
+    return JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+  }
 }
 
 /**
@@ -85,11 +140,13 @@ async function raw(url) {
  * @param {string} file
  */
 async function download(url, file) {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'cookie-editor-zh-sync' },
+  await withRetry(`GET ${url}`, async () => {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'cookie-editor-zh-sync' },
+    });
+    if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
+    fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
   });
-  if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
-  fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
 }
 
 /**
@@ -241,9 +298,7 @@ async function main() {
 
   const commit = await gh('GET', `/repos/${UPSTREAM}/commits/master`);
   const sha = commit.sha;
-  const pkg = JSON.parse(
-    await raw(`https://raw.githubusercontent.com/${UPSTREAM}/${sha}/package.json`)
-  );
+  const pkg = await upstreamPackage(sha);
   const version = pkg.version;
   const tag = `zh-v${version}-${sha.slice(0, 7)}`;
   log(`上游 ${UPSTREAM} @ ${sha.slice(0, 7)}，版本 ${version}`);
@@ -328,27 +383,29 @@ async function main() {
   for (const name of assets) {
     const file = path.join(tmp, name);
     const buf = fs.readFileSync(file);
-    const res = await fetch(
-      `https://uploads.github.com/repos/${REPO}/releases/${release.id}/assets?name=${encodeURIComponent(
-        name
-      )}`,
-      {
-        method: 'POST',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${TOKEN}`,
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': String(buf.length),
-          'User-Agent': 'cookie-editor-zh-sync',
-        },
-        body: buf,
-      }
-    );
-    if (!res.ok) {
-      throw new Error(
-        `上传 ${name} 失败: ${res.status} ${(await res.text()).slice(0, 200)}`
+    await withRetry(`上传 ${name}`, async () => {
+      const res = await fetch(
+        `https://uploads.github.com/repos/${REPO}/releases/${release.id}/assets?name=${encodeURIComponent(
+          name
+        )}`,
+        {
+          method: 'POST',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${TOKEN}`,
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': String(buf.length),
+            'User-Agent': 'cookie-editor-zh-sync',
+          },
+          body: buf,
+        }
       );
-    }
+      if (!res.ok) {
+        throw new Error(
+          `上传 ${name} 失败: ${res.status} ${(await res.text()).slice(0, 200)}`
+        );
+      }
+    });
     log(`已上传 ${name}`);
   }
 
