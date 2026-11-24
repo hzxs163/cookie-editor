@@ -10,7 +10,7 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `zh-CN.json` | 词典：`text`（HTML 文本）、`attrs`（placeholder/title 等）、`js`（JS 里写死的提示语） |
+| `zh-CN.json` | 词典：`text`（HTML 文本）、`attrs`（placeholder/title 等）、`js`（JS 里写死的提示语）、`errors`（浏览器原生报错） |
 | `localize.mjs` | 把上游源码复制出来并逐条替换文案，同时报告"上游新增的英文"和"词典里失效的条目" |
 | `ci.mjs` | 完整流水线：查上游 → 去重 → 下载 → 汉化 → 打包 → 发 Release |
 | `heartbeat.mjs` | 每 7 天留一次心跳提交，避免公共仓库 60 天无活动被停用定时任务 |
@@ -48,11 +48,28 @@ node localize/ci.mjs --build-only --src . --out dist   # 汉化 + 打包
 - `text` 里的键是 HTML 文本节点（多行段落会被折叠成一行再匹配）。
 - `attrs` 只认这几个属性：`placeholder`、`title`、`aria-label`、`alt`、`data-tooltip`、`data-tooltip-left`。
 - `js` 只作用于 `interface/lib/cookie.js`、`interface/lib/ads/activeAds.js`、
-  `interface/popup/cookie-list.js`、`interface/options/options.js`、
-  `interface/devtools/devtools.js`、`cookie-editor.js` 里的**完整字符串字面量**。
+  `interface/popup/cookie-list.js`、`interface/devtools/cookieHandlerDevtools.js`、
+  `interface/options/options.js`、`interface/devtools/devtools.js`、`cookie-editor.js`
+  里的**完整字符串字面量**。
 - 品牌名 `Cookie-Editor`、规格值 `SameSite` / `None` / `Lax` / `Strict`、格式名 `JSON` / `Netscape`
   保持原样，放在 `keep` 里，这样覆盖率报告不会把它们算成漏翻。
-- 浏览器自己抛出的报错（如 `Invalid cookie fields`）不会翻译，那些字符串来自 Chrome/Firefox。
+
+## 浏览器原生报错（`errors`）
+
+Chrome / Firefox 的 cookies、permissions API 抛出来的 message 是英文，源码里改不到。
+构建时会在共用的 `interface/popup/cookie-list.js` 里注入一个 `ceZhError()`：
+
+- `errors.exact`：整句精确匹配的常见报错（如 `Invalid cookie fields`）。
+- `errors.rules`：带数据的正则规则，`zh` 里用 `$1` 引用捕获组（如没有权限的 URL）。
+- 规则都认不出时，输出 `操作失败：<浏览器原文>`，不会丢信息；`errors.prefix` 管这个前缀。
+
+新增一条规则：
+
+```json
+{ "re": "^invalid url", "flags": "i", "zh": "URL 无效，读不到这个站点的 Cookie。" }
+```
+
+构建日志会打印"接管 N 个提示入口"，如果上游把报错入口改掉了（数量变 0），会给出警告。
 
 ## 注意
 

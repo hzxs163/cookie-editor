@@ -137,6 +137,55 @@
     "All your cookies were deleted": "已删除所有 Cookie",
     "Done!": "完成！",
     "Enjoying Cookie-Editor? Buy me a coffee!": "喜欢 Cookie-Editor？请我喝杯咖啡吧！",
-    "Cookie-Editor is always free. Help its development by sponsoring me.": "Cookie-Editor 永远免费。欢迎赞助支持它的开发。"
+    "Cookie-Editor is always free. Help its development by sponsoring me.": "Cookie-Editor 永远免费。欢迎赞助支持它的开发。",
+    "Failed to get cookies": "获取 Cookie 失败",
+    "Failed to save cookie": "保存 Cookie 失败",
+    "Failed to remove cookie": "删除 Cookie 失败"
+  },
+  "errors": {
+    "prefix": "操作失败：",
+    "empty": "操作失败，浏览器没有给出原因。",
+    "exact": {
+      "Invalid cookie fields": "Cookie 字段无效：检查名称是否含非法字符、值是否过长，以及 SameSite=None 时是否勾了「安全」。",
+      "Invalid cookie": "Cookie 字段无效：检查名称是否含非法字符、值是否过长，以及 SameSite=None 时是否勾了「安全」。",
+      "Failed to parse cookie": "浏览器无法解析这个 Cookie。"
+    },
+    "rules": [
+      {
+        "re": "^no host permissions for cookies at url:?\\s*(.+?)\\.?$",
+        "flags": "i",
+        "zh": "没有 $1 的 Cookie 访问权限。"
+      },
+      {
+        "re": "^could not find host permissions for cookies at url:?\\s*(.+?)\\.?$",
+        "flags": "i",
+        "zh": "浏览器没找到 $1 的 Cookie 权限。"
+      },
+      {
+        "re": "invalid url|invalid scheme",
+        "flags": "i",
+        "zh": "URL 无效，读不到这个站点的 Cookie。"
+      },
+      {
+        "re": "user gesture",
+        "flags": "i",
+        "zh": "这个权限申请需要点击操作触发。"
+      },
+      {
+        "re": "permissions?.*(denied|not granted)|not allowed to (access|request)",
+        "flags": "i",
+        "zh": "浏览器没有授予所需的权限。"
+      },
+      {
+        "re": "quota|too (long|large)|exceed",
+        "flags": "i",
+        "zh": "Cookie 超出浏览器允许的大小。"
+      },
+      {
+        "re": "no cookie|cookie.*not found|not found.*cookie",
+        "flags": "i",
+        "zh": "找不到要操作的 Cookie，可能已被网站删除。"
+      }
+    ]
   }
 }

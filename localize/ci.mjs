@@ -229,6 +229,12 @@ async function buildNotes({ commit, version, sha, coverage, prevSha, assets }) {
     }`
   );
 
+  if (coverage.errors) {
+    lines.push(
+      `- 报错翻译：浏览器原生报错已覆盖 ${coverage.errors.exact} 条常见提示 + ${coverage.errors.rules} 条规则（接管 ${coverage.errors.sites} 个提示入口）；认不出的报错保留原文并加「操作失败：」前缀`
+    );
+  }
+
   if (prevSha && prevSha !== sha) {
     const cmp = await gh('GET', `/repos/${UPSTREAM}/compare/${prevSha}...${sha}`);
     const commits = (cmp?.commits || []).slice(-15).reverse();

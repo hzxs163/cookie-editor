@@ -30,6 +30,7 @@ const JS_FILES = [
   'interface/lib/cookie.js',
   'interface/lib/ads/activeAds.js',
   'interface/popup/cookie-list.js',
+  'interface/devtools/cookieHandlerDevtools.js',
   'interface/options/options.js',
   'interface/devtools/devtools.js',
   'cookie-editor.js',
@@ -169,6 +170,68 @@ function patchJs(code, dict, report, file) {
 }
 
 /**
+ * 注入浏览器原生报错的翻译函数，并把发送报错的入口改走它。
+ *
+ * 浏览器 cookies / permissions API 抛出的 message 是英文且无法在源码里改，
+ * 所以在构建时塞一个小函数：已知文案查表，带数据的用正则，认不出来的
+ * 保留原文并加中文前缀，保证不会把有用信息吞掉。
+ * @param {string} code cookie-list.js 源码（已做过普通文案替换）。
+ * @param {object} dict 词典。
+ * @return {object} {code, sites, rules, exact}
+ */
+function patchBrowserErrors(code, dict) {
+  const cfg = dict.errors || {};
+  const exact = cfg.exact || {};
+  const rules = cfg.rules || [];
+  const helper = [
+    '  // ==== 浏览器原生报错翻译（由 localize/zh-CN.json 的 errors 段生成）====',
+    `  const CE_ZH_ERROR_EXACT = ${JSON.stringify(exact)};`,
+    '  const CE_ZH_ERROR_RULES = [',
+    ...rules.map(
+      r =>
+        `    [new RegExp(${JSON.stringify(r.re)}, ${JSON.stringify(
+          r.flags || ''
+        )}), ${JSON.stringify(r.zh)}],`
+    ),
+    '  ];',
+    '  function ceZhError(error) {',
+    '    const raw =',
+    '      error && error.message',
+    '        ? error.message',
+    "        : error instanceof Error ? '' : String(error);",
+    "    const text = (raw || '').trim();",
+    `    if (!text) return ${JSON.stringify(
+      cfg.empty || '操作失败，浏览器没有给出原因。'
+    )};`,
+    '    if (Object.prototype.hasOwnProperty.call(CE_ZH_ERROR_EXACT, text)) {',
+    '      return CE_ZH_ERROR_EXACT[text];',
+    '    }',
+    '    for (const rule of CE_ZH_ERROR_RULES) {',
+    '      const match = text.match(rule[0]);',
+    '      if (match) {',
+    "        return rule[1].replace(/\\$(\\d)/g, (_, n) => (match[Number(n)] || '').trim());",
+    '      }',
+    '    }',
+    `    return ${JSON.stringify(cfg.prefix || '操作失败：')} + text;`,
+    '  }',
+    '',
+  ].join('\n');
+
+  const marker = '  function sendNotification(message) {';
+  const needle = 'sendNotification(error.message || String(error))';
+  const sites = code.split(needle).length - 1;
+  const info = { sites, rules: rules.length, exact: Object.keys(exact).length };
+  if (!code.includes(marker)) {
+    return { ...info, code, sites: 0 };
+  }
+  let result = code.replace(marker, helper + marker);
+  result = result
+    .split(needle)
+    .join('sendNotification(ceZhError(error))');
+  return { ...info, code: result };
+}
+
+/**
  * 生成某个浏览器的扩展目录。
  * @param {string} srcRoot 上游源码根目录。
  * @param {string} outDir 该浏览器的输出目录。
@@ -210,6 +273,26 @@ function buildBrowser(srcRoot, outDir, browser, dict, report) {
     if (!fs.existsSync(file)) continue;
     const code = fs.readFileSync(file, 'utf8');
     fs.writeFileSync(file, patchJs(code, dict, report, rel));
+  }
+
+  // 2b. 浏览器原生报错（只在所有界面共用的 cookie-list.js 上注入一次）
+  const listFile = path.join(outDir, 'interface/popup/cookie-list.js');
+  if (fs.existsSync(listFile)) {
+    const patched = patchBrowserErrors(
+      fs.readFileSync(listFile, 'utf8'),
+      dict
+    );
+    fs.writeFileSync(listFile, patched.code);
+    report.errors = {
+      sites: patched.sites,
+      rules: patched.rules,
+      exact: patched.exact,
+    };
+    if (!patched.sites && browser === 'chrome') {
+      console.log(
+        '⚠️  cookie-list.js 里找不到报错提示入口（上游可能改了代码），本次未做报错翻译'
+      );
+    }
   }
 
   // 3. manifest.json
@@ -286,6 +369,7 @@ const coverage = {
   missingCount: missingUnique.length,
   missing: missingUnique.slice(0, 60),
   staleDictionary: [...new Set([...staleText, ...staleJs])],
+  errors: report.errors || null,
   builds: infos,
 };
 
@@ -297,6 +381,11 @@ if (args.report) {
 console.log(
   `汉化完成：${args.browsers.join(' / ')} → ${outRoot}（命中 ${hitSet.size} 条 HTML 文案、${hitJs.size} 条 JS 文案）`
 );
+if (coverage.errors) {
+  console.log(
+    `报错翻译：接管 ${coverage.errors.sites} 个提示入口，${coverage.errors.exact} 条常见报错 + ${coverage.errors.rules} 条规则`
+  );
+}
 if (missingUnique.length) {
   console.log(`⚠️  还有 ${missingUnique.length} 处英文未翻译：`);
   for (const m of missingUnique.slice(0, 30)) {
