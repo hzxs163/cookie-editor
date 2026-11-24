@@ -1,0 +1,54 @@
+name: 上游同步 · 汉化发布
+
+on:
+  schedule:
+    # 每天 21:43 UTC（北京时间 05:43）检查一次上游
+    - cron: '43 21 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '强制重建（删除同版本 Release 后重发）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zh-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 同步上游、汉化并发布 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          UPSTREAM_REPO: Moustachauve/cookie-editor
+        run: node localize/ci.mjs ${{ inputs.force && '--force' || '' }}
+
+      # 公共仓库连续 60 天没有提交会被自动停用定时任务，
+      # 这里每 7 天在 zh-state 分支留一次心跳提交（提交到 master 会触发上游 CI，没必要）。
+      - name: 心跳提交
+        run: |
+          set -e
+          CHANGE=$(node localize/heartbeat.mjs)
+          if [ "$CHANGE" != "1" ]; then
+            echo "本次不需要提交心跳"
+            exit 0
+          fi
+          git config user.name 'zh-sync-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B zh-state
+          git add localize/state.json
+          git commit -m "chore(zh): 同步状态 $(date -u +%F)"
+          git push --force origin zh-state

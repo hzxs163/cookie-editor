@@ -20,6 +20,7 @@ export default [
       'safari/**',
       'test-results/**',
       'playwright-report/**',
+      'localize/**',
     ],
   },
 
